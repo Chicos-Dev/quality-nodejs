@@ -1,14 +1,20 @@
-name: 'Hello World'
-description: 'Greet someone'
+name: 'quality-nodejs'
+description: 'Unit test execution and coverage, dependency check, and quality metrics'
+
 inputs:
-  who-to-greet:  # id of input
+  who-to-greet:
     description: 'Who to greet'
     required: true
     default: 'World'
+  node-version:
+    required: false
+    default: '12.x'
+
 outputs:
   random-number: 
     description: "Random number"
     value: ${{ steps.random-number-generator.outputs.random-id }}
+
 runs:
   using: "composite"
   steps: 
@@ -17,3 +23,64 @@ runs:
     - id: random-number-generator
       run: echo "::set-output name=random-id::$(echo $RANDOM)"
       shell: bash
+
+    - name: NPM setup
+      uses: actions/setup-node@v1
+      with:
+        node-version: ${{ inputs.node-version  }}
+
+    - name: Install linting, test and coverage dependencies
+      run: npm install
+
+    - name: Run code linting
+      run: npm run-script lint-ci
+
+    - name: Cache dependency database
+      uses: actions/cache@v2
+      if: always()
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          ${{ runner.os }}-maven-
+
+    - name: Run dependency check
+      if: always()
+      run: mvn dependency-check:check
+
+    - name: Upload dependency check report
+      uses: actions/upload-artifact@v2
+      if: always()
+      with:
+        name: dependency-check-report.html
+        path: target/dependency-check-report.html
+
+    - name: Execute unit tests
+      if: always()
+      run: npm run-script test-ci
+
+    - name: Calculate code coverage
+      if: always()
+      run: npm run-script coverage-ci
+
+    - name: Publish unit test results
+      uses: EnricoMi/publish-unit-test-result-action@v1.6
+      if: always()
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        files: junit.xml
+
+    - name: Rewrite report.json
+      if: always()
+      run: sed -i 's+/home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}+/github/workspace+g' report.json
+
+    - name: Rewrite test-report.xml
+      if: always()
+      run: sed -i 's+/home/runner/work/${{ github.event.repository.name }}/${{ github.event.repository.name }}+/github/workspace+g' test-report.xml
+
+    - name: SonarQube scan
+      uses: kitabisa/sonarqube-action@master
+      if: always()
+      with:
+        host: ${{ secrets.SONARQUBE_HOST }}
+        login: ${{ secrets.SONARQUBE_TOKEN }}
